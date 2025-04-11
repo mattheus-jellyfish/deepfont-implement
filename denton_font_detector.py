@@ -19,31 +19,6 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras import backend as K
 
 
-def get_random_text(length):
-    """Generate random text of specified length."""
-    letters = string.ascii_letters
-    return ''.join(random.choice(letters) for i in range(length))
-
-
-def create_image(size, message, font):
-    """Create an image with text using the specified font."""
-    width, height = size
-    image = Image.new('RGB', size, 'white')
-    draw = ImageDraw.Draw(image)
-    
-    # Get the bounding box of the text
-    bbox = font.getbbox(message)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    
-    # Center the text
-    x = (width - text_width) // 2
-    y = (height - text_height) // 2
-    
-    draw.text((x, y), message, font=font, fill='black')
-    return image
-
-
 def pil_image(img_path):
     """Convert image to PIL format and resize."""
     pil_im = Image.open(img_path).convert('L')
@@ -95,13 +70,97 @@ def gradient_fill(image):
     return laplacian
 
 
-def create_dataset(brand_font_path, other_fonts_dir, output_dir, count_per_font=500):
+def apply_augmentations(pil_img, augment_types=None):
+    """
+    Apply various augmentations to an input image.
+    
+    Args:
+        pil_img: PIL Image to augment
+        augment_types: List of augmentation types to apply (default: ["blur", "noise", "affine", "gradient"])
+    
+    Returns:
+        Dictionary of augmented images with augmentation type as key
+    """
+    if augment_types is None:
+        augment_types = ["blur", "noise", "affine", "gradient"]
+    
+    augmented_images = {}
+    augmented_images['original'] = pil_img
+    
+    # Individual augmentations
+    augmented_images['noise'] = noise_image(pil_img)
+    augmented_images['blur'] = blur_image(pil_img)
+    
+    open_cv_img = np.array(pil_img)
+    affine_img = affine_rotation(open_cv_img)
+    augmented_images['affine'] = affine_img
+    
+    gradient_img = gradient_fill(open_cv_img)
+    if isinstance(gradient_img, np.ndarray):
+        gradient_img = Image.fromarray(np.uint8(np.clip(gradient_img, 0, 255)))
+    augmented_images['gradient'] = gradient_img
+    
+    # Combinations
+    for l in range(2, len(augment_types) + 1):
+        combinations = list(itertools.combinations(augment_types, l))
+        
+        for combo in combinations:
+            combo_name = "+".join(combo)
+            temp_img = pil_img
+            
+            for aug_type in combo:
+                if aug_type == 'noise':
+                    temp_img = noise_image(temp_img)
+                elif aug_type == 'blur':
+                    temp_img = blur_image(temp_img)
+                elif aug_type == 'affine':
+                    open_cv_affine = np.array(temp_img)
+                    temp_img = affine_rotation(open_cv_affine)
+                elif aug_type == 'gradient':
+                    open_cv_gradient = np.array(temp_img)
+                    temp_img = gradient_fill(open_cv_gradient)
+                
+                # Convert to PIL image if needed
+                if isinstance(temp_img, np.ndarray):
+                    temp_img = Image.fromarray(np.uint8(np.clip(temp_img, 0, 255)))
+            
+            augmented_images[combo_name] = temp_img
+    
+    return augmented_images
+
+
+def get_random_text(length):
+    """Generate random text of specified length."""
+    letters = string.ascii_letters
+    return ''.join(random.choice(letters) for i in range(length))
+
+
+def create_image(size, message, font):
+    """Create an image with text using the specified font."""
+    width, height = size
+    image = Image.new('RGB', size, 'white')
+    draw = ImageDraw.Draw(image)
+    
+    # Get the bounding box of the text
+    bbox = font.getbbox(message)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    
+    # Center the text
+    x = (width - text_width) // 2
+    y = (height - text_height) // 2
+    
+    draw.text((x, y), message, font=font, fill='black')
+    return image
+
+
+def create_dataset(brand_font_path, other_fonts_dir=None, output_dir="train_data", count_per_font=500):
     """
     Create a dataset of images with brand font (positive class) and other fonts (negative class).
     
     Args:
         brand_font_path: Path to the brand font file
-        other_fonts_dir: Directory containing other font files
+        other_fonts_dir: Directory containing other font files (optional)
         output_dir: Directory to save generated images
         count_per_font: Number of images to generate per font
     """
@@ -120,32 +179,34 @@ def create_dataset(brand_font_path, other_fonts_dir, output_dir, count_per_font=
         font = ImageFont.truetype(brand_font_path, fontsize)
         msg = get_random_text(random.randint(6, 18))
         pil_img = create_image((width, height), msg, font)
-        pil_img.save(f"{output_dir}/positive/{msg}.jpg")
+        Path(f"{output_dir}/positive/{brand_font_name}").mkdir(parents=True, exist_ok=True)
+        pil_img.save(f"{output_dir}/positive/{brand_font_name}/{msg}.jpg")
     
-    # Generate negative samples with other fonts
-    other_font_files = [f for f in glob.glob(f"{other_fonts_dir}/*") 
-                         if Path(f).stem != brand_font_name]
-    
-    if not other_font_files:
-        print(f"Warning: No other fonts found in {other_fonts_dir}")
-        return
-    
-    samples_per_font = count_per_font // len(other_font_files)
-    if samples_per_font < 1:
-        samples_per_font = 1
-    
-    for font_file in other_font_files:
-        font_name = Path(font_file).stem
-        print(f"Generating ~{samples_per_font} negative samples with font: {font_name}")
+    # Generate negative samples with other fonts if directory is provided
+    if other_fonts_dir:
+        other_font_files = [f for f in glob.glob(f"{other_fonts_dir}/*") 
+                           if Path(f).stem != brand_font_name]
         
-        for c in range(samples_per_font):
-            height = 80
-            width = 600
-            fontsize = 48
-            font = ImageFont.truetype(font_file, fontsize)
-            msg = get_random_text(random.randint(6, 18))
-            pil_img = create_image((width, height), msg, font)
-            pil_img.save(f"{output_dir}/negative/{font_name}_{msg}.jpg")
+        if not other_font_files:
+            print(f"Warning: No other fonts found in {other_fonts_dir}")
+            return
+        
+        samples_per_font = count_per_font // len(other_font_files)
+        if samples_per_font < 1:
+            samples_per_font = 1
+        
+        for font_file in other_font_files:
+            font_name = Path(font_file).stem
+            print(f"Generating ~{samples_per_font} negative samples with font: {font_name}")
+            
+            for c in range(samples_per_font):
+                height = 80
+                width = 600
+                fontsize = 48
+                font = ImageFont.truetype(font_file, fontsize)
+                msg = get_random_text(random.randint(6, 18))
+                pil_img = create_image((width, height), msg, font)
+                pil_img.save(f"{output_dir}/negative/{font_name}_{msg}.jpg")
 
 
 def create_model():
@@ -207,35 +268,15 @@ def train_model(data_path, epochs=20, batch_size=32):
         
         # Load and process original image
         pil_img = pil_image(image_path)
-        org_img = img_to_array(pil_img)
-        data.append(org_img)
-        labels.append(label)
         
         # Apply augmentations
-        for l in range(0, len(augment_types)):
-            combinations = list(itertools.combinations(augment_types, l+1))
-            
-            for combo in combinations:
-                temp_img = pil_img
-                for aug_type in combo:
-                    if aug_type == 'noise':
-                        temp_img = noise_image(temp_img)
-                    elif aug_type == 'blur':
-                        temp_img = blur_image(temp_img)
-                    elif aug_type == 'affine':
-                        open_cv_affine = np.array(temp_img)
-                        temp_img = affine_rotation(open_cv_affine)
-                    elif aug_type == 'gradient':
-                        open_cv_gradient = np.array(temp_img)
-                        temp_img = gradient_fill(open_cv_gradient)
-                
-                # Convert to array and add to dataset
-                if isinstance(temp_img, np.ndarray):
-                    temp_img = Image.fromarray(np.uint8(np.clip(temp_img, 0, 255)))
-                
-                temp_img = img_to_array(temp_img)
-                data.append(temp_img)
-                labels.append(label)
+        augmented_imgs = apply_augmentations(pil_img, augment_types)
+        
+        # Add all augmented images to the dataset
+        for aug_img in augmented_imgs.values():
+            img_array = img_to_array(aug_img)
+            data.append(img_array)
+            labels.append(label)
     
     # Convert to numpy arrays and normalize
     data = np.asarray(data, dtype="float") / 255.0
@@ -359,7 +400,7 @@ def predict(model_path, image_path, threshold=0.5):
     return result, prediction
 
 
-def test_augmentation(image_path, output_dir=None):
+def test_augmentation(image_path, output_dir="augmented_images"):
     """
     Test data augmentation on a single image or all images in a directory.
     
@@ -383,52 +424,11 @@ def test_augmentation(image_path, output_dir=None):
         print(f"Found {len(image_files)} images. Processing first image: {os.path.basename(image_files[0])}")
         image_path = image_files[0]
     
-    augmented_images = {}
-    
     # Load and process original image
     pil_img = pil_image(image_path)
-    augmented_images['original'] = pil_img
     
-    # Individual augmentations
-    augmented_images['noise'] = noise_image(pil_img)
-    augmented_images['blur'] = blur_image(pil_img)
-    
-    open_cv_img = np.array(pil_img)
-    affine_img = affine_rotation(open_cv_img)
-    augmented_images['affine'] = affine_img
-    
-    gradient_img = gradient_fill(open_cv_img)
-    if isinstance(gradient_img, np.ndarray):
-        gradient_img = Image.fromarray(np.uint8(np.clip(gradient_img, 0, 255)))
-    augmented_images['gradient'] = gradient_img
-    
-    # Combinations
-    augment_types = ["blur", "noise", "affine", "gradient"]
-    
-    for l in range(2, len(augment_types) + 1):
-        combinations = list(itertools.combinations(augment_types, l))
-        
-        for combo in combinations:
-            combo_name = "+".join(combo)
-            temp_img = pil_img
-            
-            for aug_type in combo:
-                if aug_type == 'noise':
-                    temp_img = noise_image(temp_img)
-                elif aug_type == 'blur':
-                    temp_img = blur_image(temp_img)
-                elif aug_type == 'affine':
-                    open_cv_affine = np.array(temp_img)
-                    temp_img = affine_rotation(open_cv_affine)
-                elif aug_type == 'gradient':
-                    open_cv_gradient = np.array(temp_img)
-                    temp_img = gradient_fill(open_cv_gradient)
-                
-                # Convert to PIL image if needed
-                if isinstance(temp_img, np.ndarray):
-                    temp_img = Image.fromarray(np.uint8(np.clip(temp_img, 0, 255)))
-            
-            augmented_images[combo_name] = temp_img
+    # Apply augmentations
+    augmented_images = apply_augmentations(pil_img)
     
     # Save images if output directory is provided
     if output_dir:
@@ -463,7 +463,7 @@ def main():
     create_parser = subparsers.add_parser('create_dataset', help='Create a dataset for training')
     create_parser.add_argument('--brand_font', '-bf', default='Denton-Light.otf', 
                                help='Path to the Denton-Light font file')
-    create_parser.add_argument('--other_fonts', '-of', required=True, help='Directory containing other font files')
+    create_parser.add_argument('--other_fonts', '-of', help='Directory containing other font files')
     create_parser.add_argument('--output', '-o', required=True, help='Output directory for dataset')
     create_parser.add_argument('--count', '-c', type=int, default=500, help='Number of images per font')
     
