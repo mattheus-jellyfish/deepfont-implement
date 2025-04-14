@@ -31,7 +31,8 @@ def noise_image(pil_im):
     """Add random noise to image."""
     img_array = np.asarray(pil_im)
     mean = 0.0
-    std = 5
+    # Change std from 5 to 3 as per paper
+    std = 3
     noisy_img = img_array + np.random.normal(mean, std, img_array.shape)
     noisy_img_clipped = np.clip(noisy_img, 0, 255)
     noise_img = Image.fromarray(np.uint8(noisy_img_clipped))
@@ -40,35 +41,91 @@ def noise_image(pil_im):
 
 
 def blur_image(pil_im):
-    """Apply Gaussian blur to image."""
-    blur_img = pil_im.filter(ImageFilter.GaussianBlur(radius=3))
+    """Apply Gaussian blur to image with random radius between 2.5-3.5 as per paper."""
+    # Use random radius between 2.5 and 3.5 as described in the paper
+    radius = random.uniform(2.5, 3.5)
+    blur_img = pil_im.filter(ImageFilter.GaussianBlur(radius=radius))
     blur_img = blur_img.resize((105, 105))
     return blur_img
 
 
 def affine_rotation(img):
-    """Apply affine transformation to image."""
+    """Apply random affine transformation to image as per paper."""
     if isinstance(img, Image.Image):
         img = np.array(img)
         
     rows, columns = img.shape
-    point1 = np.float32([[10, 10], [30, 10], [10, 30]])
-    point2 = np.float32([[20, 15], [40, 10], [20, 40]])
-    A = cv2.getAffineTransform(point1, point2)
+    
+    # Generate random points for affine transformation
+    # Create base points first
+    src_pts = np.float32([[0, 0], [columns-1, 0], [0, rows-1]])
+    
+    # Create randomly perturbed destination points
+    # Add random offsets (between -10% and +10% of image dimensions)
+    x_offset_max = columns * 0.1
+    y_offset_max = rows * 0.1
+    
+    dst_pts = np.float32([
+        [random.uniform(-x_offset_max, x_offset_max), 
+         random.uniform(-y_offset_max, y_offset_max)],
+        [columns-1 + random.uniform(-x_offset_max, x_offset_max), 
+         random.uniform(-y_offset_max, y_offset_max)],
+        [random.uniform(-x_offset_max, x_offset_max), 
+         rows-1 + random.uniform(-y_offset_max, y_offset_max)]
+    ])
+    
+    # Get the transformation matrix
+    A = cv2.getAffineTransform(src_pts, dst_pts)
     output = cv2.warpAffine(img, A, (columns, rows))
     affine_img = Image.fromarray(np.uint8(output))
     affine_img = affine_img.resize((105, 105))
     return affine_img
 
 
-def gradient_fill(image):
-    """Apply Laplacian gradient to image."""
-    if isinstance(image, Image.Image):
-        image = np.array(image)
-        
-    laplacian = cv2.Laplacian(image, cv2.CV_64F)
-    laplacian = cv2.resize(laplacian, (105, 105))
-    return laplacian
+def gradient_fill(img):
+    """
+    Apply background gradient shading as described in the paper.
+    Replaces the incorrect Laplacian edge detection with proper gradient background.
+    """
+    if isinstance(img, Image.Image):
+        img = np.array(img)
+    
+    # Create a gradient background (lighter on one side, darker on the other)
+    rows, cols = img.shape
+    
+    # Determine gradient direction (horizontal, vertical, or diagonal)
+    direction = random.choice(['horizontal', 'vertical', 'diagonal'])
+    
+    # Create gradient array
+    gradient = np.zeros((rows, cols), dtype=np.uint8)
+    
+    if direction == 'horizontal':
+        for col in range(cols):
+            # Linear gradient from 220 to 250 (subtle light variation)
+            value = int(220 + (col / cols) * 30)
+            gradient[:, col] = value
+    elif direction == 'vertical':
+        for row in range(rows):
+            # Linear gradient from 220 to 250 (subtle light variation)
+            value = int(220 + (row / rows) * 30)
+            gradient[row, :] = value
+    else:  # diagonal
+        for row in range(rows):
+            for col in range(cols):
+                # Diagonal gradient
+                value = int(220 + ((row + col) / (rows + cols)) * 30)
+                gradient[row, col] = value
+    
+    # Create a binary threshold to separate text (black) from background (white)
+    _, binary = cv2.threshold(img, 200, 255, cv2.THRESH_BINARY)
+    
+    # Combine: keep text from original image, use gradient for background
+    result = np.copy(img)
+    result[binary == 255] = gradient[binary == 255]
+    
+    # Resize to expected dimensions
+    result = cv2.resize(result, (105, 105))
+    return result
 
 
 def variable_aspect_ratio(pil_img):
@@ -106,10 +163,11 @@ def variable_aspect_ratio(pil_img):
 def apply_augmentations(pil_img, augment_types=None):
     """
     Apply various augmentations to an input image.
+    Modified to use random selection of augmentations instead of all combinations.
     
     Args:
         pil_img: PIL Image to augment
-        augment_types: List of augmentation types to apply (default: ["blur", "noise", "affine", "gradient", "aspect_ratio"])
+        augment_types: List of augmentation types to apply
     
     Returns:
         Dictionary of augmented images with augmentation type as key
@@ -118,43 +176,52 @@ def apply_augmentations(pil_img, augment_types=None):
         augment_types = ["blur", "noise", "affine", "gradient", "aspect_ratio"]
     
     augmented_images = {}
+    
+    # Always include original image
     augmented_images['original'] = pil_img
     
-    # Individual augmentations
-    augmented_images['noise'] = noise_image(pil_img)
-    augmented_images['blur'] = blur_image(pil_img)
+    # Random number of augmentations to apply (0 to 3)
+    # This prevents excessive stacking of all augmentations
+    num_augs = random.randint(0, min(3, len(augment_types)))
     
-    open_cv_img = np.array(pil_img)
-    affine_img = affine_rotation(open_cv_img)
-    augmented_images['affine'] = affine_img
-    
-    gradient_img = gradient_fill(open_cv_img)
-    if isinstance(gradient_img, np.ndarray):
-        gradient_img = Image.fromarray(np.uint8(np.clip(gradient_img, 0, 255)))
-    augmented_images['gradient'] = gradient_img
-    
-    # New aspect ratio augmentation
-    augmented_images['aspect_ratio'] = variable_aspect_ratio(pil_img)
-    
-    # Combinations
-    for l in range(2, len(augment_types) + 1):
-        combinations = list(itertools.combinations(augment_types, l))
+    if num_augs > 0:
+        # Randomly select which augmentations to apply
+        selected_augs = random.sample(augment_types, num_augs)
         
-        for combo in combinations:
-            combo_name = "+".join(combo)
+        # Apply individual augmentations
+        for aug_type in augment_types:
+            if aug_type == 'noise':
+                augmented_images['noise'] = noise_image(pil_img)
+            elif aug_type == 'blur':
+                augmented_images['blur'] = blur_image(pil_img)
+            elif aug_type == 'affine':
+                open_cv_img = np.array(pil_img)
+                augmented_images['affine'] = affine_rotation(open_cv_img)
+            elif aug_type == 'gradient':
+                open_cv_img = np.array(pil_img)
+                gradient_img = gradient_fill(open_cv_img)
+                if isinstance(gradient_img, np.ndarray):
+                    gradient_img = Image.fromarray(np.uint8(np.clip(gradient_img, 0, 255)))
+                augmented_images['gradient'] = gradient_img
+            elif aug_type == 'aspect_ratio':
+                augmented_images['aspect_ratio'] = variable_aspect_ratio(pil_img)
+        
+        # Apply a random combination of augmentations (if selected)
+        if len(selected_augs) > 1:
+            combo_name = "+".join(selected_augs)
             temp_img = pil_img
             
-            for aug_type in combo:
+            for aug_type in selected_augs:
                 if aug_type == 'noise':
                     temp_img = noise_image(temp_img)
                 elif aug_type == 'blur':
                     temp_img = blur_image(temp_img)
                 elif aug_type == 'affine':
-                    open_cv_affine = np.array(temp_img)
-                    temp_img = affine_rotation(open_cv_affine)
+                    open_cv_combo = np.array(temp_img)
+                    temp_img = affine_rotation(open_cv_combo)
                 elif aug_type == 'gradient':
-                    open_cv_gradient = np.array(temp_img)
-                    temp_img = gradient_fill(open_cv_gradient)
+                    open_cv_combo = np.array(temp_img)
+                    temp_img = gradient_fill(open_cv_combo)
                 elif aug_type == 'aspect_ratio':
                     temp_img = variable_aspect_ratio(temp_img)
                 
@@ -213,7 +280,7 @@ def create_image(size, message, font, variable_spacing=False):
             
             # Apply random spacing using Gaussian distribution 
             # as per paper (mean=10, std=40, bounded between 0 and 50)
-            spacing = min(max(0, int(np.random.normal(10, 40))), 100)
+            spacing = min(max(0, int(np.random.normal(10, 40))), 50)
             
             # Move to next character position
             x_start += char_width + spacing
@@ -261,9 +328,8 @@ def create_dataset(brand_font_path="fonts/Denton-Light.otf", other_fonts_dir=Non
             font = ImageFont.truetype(brand_font_path, fontsize)
             msg = get_random_text(random.randint(6, 18))
             
-            # Apply variable character spacing to approximately half of the samples
-            # use_variable_spacing = random.choice([True, False])
-            use_variable_spacing = False
+            # Enable variable character spacing (randomly) as per paper
+            use_variable_spacing = random.choice([True, False])
             pil_img = create_image((width, height), msg, font, variable_spacing=use_variable_spacing)
             
             Path(f"{output_dir}/positive/{brand_font_name}").mkdir(parents=True, exist_ok=True)
@@ -312,9 +378,8 @@ def create_dataset(brand_font_path="fonts/Denton-Light.otf", other_fonts_dir=Non
                         font = ImageFont.truetype(font_file, fontsize)
                         msg = get_random_text(random.randint(6, 18))
                         
-                        # Apply variable character spacing to approximately half of the samples
-                        # use_variable_spacing = random.choice([True, False])
-                        use_variable_spacing = False
+                        # Enable variable character spacing (randomly) as per paper
+                        use_variable_spacing = random.choice([True, False])
                         pil_img = create_image((width, height), msg, font, variable_spacing=use_variable_spacing)
                         
                         # Save in font-specific subfolder
