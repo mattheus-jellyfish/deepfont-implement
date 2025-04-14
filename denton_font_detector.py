@@ -262,7 +262,8 @@ def create_dataset(brand_font_path="fonts/Denton-Light.otf", other_fonts_dir=Non
             msg = get_random_text(random.randint(6, 18))
             
             # Apply variable character spacing to approximately half of the samples
-            use_variable_spacing = random.choice([True, False])
+            # use_variable_spacing = random.choice([True, False])
+            use_variable_spacing = False
             pil_img = create_image((width, height), msg, font, variable_spacing=use_variable_spacing)
             
             Path(f"{output_dir}/positive/{brand_font_name}").mkdir(parents=True, exist_ok=True)
