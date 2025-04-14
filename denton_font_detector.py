@@ -836,7 +836,7 @@ def evaluate_model(model_path, test_data_path, threshold=0.5):
     
     # Check for all-negative predictions
     if np.sum(binary_predictions) == 0:
-        print("\nWARNING: Model is predicting ALL samples as negative (Not Denton-Light Font)")
+        print("\nWARNING: Model is predicting ALL samples as negative (Not Traget Font)")
         print("This could indicate a model issue or threshold that's too high")
     
     # If we have true labels, calculate metrics
@@ -880,14 +880,14 @@ def evaluate_model(model_path, test_data_path, threshold=0.5):
     # Display predictions for all images
     print("\nPredictions:")
     for i, filename in enumerate(filenames):
-        pred_label = "Denton-Light Font" if binary_predictions[i][0] == 1 else "Not Denton-Light Font"
+        pred_label = "Traget Font" if binary_predictions[i][0] == 1 else "Not Traget Font"
         confidence = raw_predictions[i][0] if binary_predictions[i][0] == 1 else 1 - raw_predictions[i][0]
         print(f"Image: {filename}")
         print(f"  Predicted: {pred_label} (Confidence: {confidence:.2%})")
         
         # If we have true labels, show ground truth
         if has_true_labels:
-            true_label = "Denton-Light Font" if true_labels[i] == 1 else "Not Denton-Light Font" 
+            true_label = "Traget Font" if true_labels[i] == 1 else "Not Traget Font" 
             correct = "✓" if binary_predictions[i][0] == true_labels[i] else "✗"
             print(f"  True: {true_label} {correct}")
         
