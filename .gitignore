@@ -132,5 +132,4 @@ dmypy.json
 
 # add train_data, test_data, and train_data_small_test folders
 train_data/
-test_data/
 train_data_small_test/
