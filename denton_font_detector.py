@@ -392,15 +392,15 @@ def create_model(use_domain_adaptation=True, pretrained_encoder=None):
     x = Flatten()(x)
     
     # fc6
-    x = Dense(4096, activation='relu')(x)
+    # x = Dense(4096, activation='relu')(x)
     # x = Dense(1024, activation='relu')(x)
-    # x = Dense(2048, activation='relu')(x)
+    x = Dense(2048, activation='relu')(x)
     x = Dropout(0.5)(x)
     
     # fc7
-    x = Dense(4096, activation='relu')(x)
+    # x = Dense(4096, activation='relu')(x)
     # x = Dense(1024, activation='relu')(x)
-    # x = Dense(2048, activation='relu')(x)
+    x = Dense(2048, activation='relu')(x)
     x = Dropout(0.5)(x)
     
     # fc8 (output layer) - adapted for binary classification
