@@ -8,3 +8,7 @@ ipykernel
 scikit-learn
 imutils
 jupyter
+pathlib
+glob2
+argparse
+tensorboard
