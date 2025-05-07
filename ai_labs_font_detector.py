@@ -507,6 +507,27 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     if not gpu_available:
         print("Warning: Training on CPU may be slow. Consider using a GPU if available.")
     
+    # Add memory growth and limit to prevent OOM errors
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            # Memory growth must be set before GPUs have been initialized
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print("Memory growth enabled for GPUs")
+            
+            # Optional: set virtual device configuration for memory limiting
+            # tf.config.set_logical_device_configuration(
+            #     gpus[0],
+            #     [tf.config.LogicalDeviceConfiguration(memory_limit=1024 * 14)]  # 14 GB limit
+            # )
+        except RuntimeError as e:
+            print(f"Error configuring GPU memory: {e}")
+    
+    # Limit TensorFlow's internal parallelism to reduce memory usage
+    tf.config.threading.set_inter_op_parallelism_threads(2)
+    tf.config.threading.set_intra_op_parallelism_threads(4)
+    
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
     model_path = os.path.join(output_dir, model_name)
@@ -577,9 +598,9 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     # Create TensorBoard callback
     tensorboard_callback = callbacks.TensorBoard(
         log_dir=log_dir,
-        histogram_freq=1,
-        write_graph=True,
-        write_images=True,
+        histogram_freq=0,  # Disable histograms to save memory
+        write_graph=False,  # Disable graph visualization to save memory
+        write_images=False,  # Disable images to save memory
         update_freq='epoch',
         profile_batch=0
     )
