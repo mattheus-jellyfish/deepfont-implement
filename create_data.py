@@ -16,7 +16,8 @@ def create_image(size, message, font):
     width, height = size
     image = Image.new('RGB', size, 'white')
     draw = ImageDraw.Draw(image)
-    w, h = font.getsize(message)
+    bbox = font.getbbox(message)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     draw.text(((width-w)/2, (height-h)/2), message, font=font, fill='black')
     return image
 

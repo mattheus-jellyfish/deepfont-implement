@@ -4,19 +4,24 @@
 import PIL
 import argparse
 import numpy as np
+import os
+import glob
 from tensorflow.keras.utils import img_to_array
 from keras.models import load_model
 
 
+# Create a reverse mapping of indices to font names
+def create_reverse_font_mapping():
+    font_files = sorted(glob.glob("fonts/*"))
+    font_names = [os.path.splitext(os.path.basename(f))[0] for f in font_files]
+    return {idx: font for idx, font in enumerate(font_names)}
+
+# Global reverse font mapping
+REVERSE_FONT_MAPPING = create_reverse_font_mapping()
+
 def rev_conv_label(label):
-    if label == 0 :
-        return 'AvenirNext'
-    elif label == 1:
-        return 'Keyboard'
-    elif label == 2 :
-        return 'SFCompactRounded-Bold'
-    elif label == 3 :
-        return 'Times'
+    # Return the font name for the given index using the global reverse mapping
+    return REVERSE_FONT_MAPPING.get(label, "Unknown")
 
 
 def get_data(img_path):
@@ -34,15 +39,23 @@ def evaluate(img_path, model_file):
     data = get_data(img_path)
 
     model = load_model(model_file)
-    # y = model.predict_classes(data)
-    predict_y=model.predict(data) 
-    print(predict_y)
-
-    classes_y=np.argmax(predict_y, axis=1)
-    print(classes_y)
-
-    label = rev_conv_label(int(classes_y))
-    print(f"{img_path}: {label}")
+    predict_y = model.predict(data)
+    
+    # Get the top 5 predictions
+    top_indices = np.argsort(predict_y[0])[-5:][::-1]  # Sort and get last 5 (highest) values, then reverse to get descending order
+    
+    print(f"\nFont prediction for {img_path}:")
+    print("-------------------------------")
+    
+    for i, idx in enumerate(top_indices):
+        font_name = rev_conv_label(idx)
+        probability = predict_y[0][idx] * 100  # Convert to percentage
+        print(f"{i+1}. {font_name}: {probability:.2f}%")
+    
+    # Also keep the original output for compatibility
+    classes_y = np.argmax(predict_y, axis=1)
+    top_font = rev_conv_label(classes_y[0])
+    print(f"\nTop prediction: {top_font}")
 
 
 if __name__ == '__main__':

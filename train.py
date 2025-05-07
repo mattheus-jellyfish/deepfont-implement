@@ -4,6 +4,7 @@
 import os
 import random
 import PIL
+from PIL import Image, ImageFilter
 import cv2
 import argparse
 import itertools
@@ -14,11 +15,22 @@ from sklearn.model_selection import train_test_split
 from keras.utils import to_categorical
 from keras import callbacks, optimizers
 from keras.models import Sequential
-from keras.preprocessing.image import ImageDataGenerator
+# from keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.layers import BatchNormalization
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D , UpSampling2D ,Conv2DTranspose
 from keras import backend as K
+import glob
+
+# Create a global font mapping
+def create_font_mapping():
+    font_files = sorted(glob.glob("fonts/*"))
+    font_names = [os.path.splitext(os.path.basename(f))[0] for f in font_files]
+    return {font: idx for idx, font in enumerate(font_names)}
+
+# Global font mapping
+FONT_MAPPING = create_font_mapping()
 
 def pil_image(img_path):
     pil_im =PIL.Image.open(img_path).convert('L')
@@ -38,7 +50,7 @@ def noise_image(pil_im):
     return noise_img
 
 def blur_image(pil_im):
-    blur_img = pil_im.filter(PIL.ImageFilter.GaussianBlur(radius=3)) # ouput
+    blur_img = pil_im.filter(ImageFilter.GaussianBlur(radius=3)) # ouput
     #imshow(blur_img)
     blur_img=blur_img.resize((105,105))
     return blur_img
@@ -65,14 +77,8 @@ def gradient_fill(image):
     return laplacian
 
 def conv_label(label):
-    if label == 'AvenirNext':
-        return 0
-    elif label == 'Keyboard':
-        return 1
-    elif label == 'SFCompactRounded-Bold':
-        return 2
-    elif label == 'Times':
-        return 3
+    # Return the index for the given label using the global mapping
+    return FONT_MAPPING.get(label)
 
 def create_model():
     model=Sequential()
@@ -100,7 +106,7 @@ def create_model():
     model.add(Dense(4096,activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(2383,activation='relu'))
-    model.add(Dense(5, activation='softmax'))
+    model.add(Dense(len(FONT_MAPPING), activation='softmax'))
   
     return model
 
@@ -162,8 +168,9 @@ def main(batch_size=128,epochs=25,data_path="train_data/"):
     # the data for training and the remaining 25% for testing
     (trainX, testX, trainY, testY) = train_test_split(data, labels, test_size=0.25, random_state=42)
     # convert the labels from integers to vectors
-    trainY = to_categorical(trainY, num_classes=5)
-    testY = to_categorical(testY, num_classes=5)
+    num_classes = len(FONT_MAPPING)
+    trainY = to_categorical(trainY, num_classes=num_classes)
+    testY = to_categorical(testY, num_classes=num_classes)
 
     aug = ImageDataGenerator(rotation_range=30, width_shift_range=0.1,height_shift_range=0.1, shear_range=0.2, zoom_range=0.2,horizontal_flip=True)
     K.set_image_data_format('channels_last')
