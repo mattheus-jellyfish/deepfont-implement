@@ -519,50 +519,53 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     if not FONT_MAPPING:
         raise ValueError(f"No fonts found in '{fonts_dir}'. Cannot proceed with training.")
     
-    data=[]
-    labels=[]
-    imagePaths = sorted(list(paths.list_images(data_path)))
-    random.seed(42)
-    random.shuffle(imagePaths)
-
-    # Define augmentation types
-    augment_types = ["blur", "noise", "affine", "gradient", "aspect_ratio"]
-
-    for imagePath in imagePaths:
-        label = imagePath.split(os.path.sep)[-2]
-        label = conv_label(label, fonts_dir)
-        pil_img = pil_image(imagePath)
-        
-        # Apply augmentations using the new function
-        augmented_images = apply_augmentations(pil_img, augment_types)
-        
-        # Add all augmented images to the dataset
-        for aug_img in augmented_images.values():
-            img_array = img_to_array(aug_img)
-            data.append(img_array)
-            labels.append(label)
-
-    data = np.asarray(data, dtype="float") / 255.0
-    labels = np.array(labels)
-
-    # partition the data into training and testing splits using 75% of
-    # the data for training and the remaining 25% for testing
-    (trainX, testX, trainY, testY) = train_test_split(data, labels, test_size=0.25, random_state=42)
-    # convert the labels from integers to vectors
+    # Get list of font directories
+    font_dirs = [d for d in os.listdir(data_path) if os.path.isdir(os.path.join(data_path, d))]
     num_classes = len(FONT_MAPPING)
-    trainY = to_categorical(trainY, num_classes=num_classes)
-    testY = to_categorical(testY, num_classes=num_classes)
-
-    # aug = ImageDataGenerator(rotation_range=30, width_shift_range=0.1,height_shift_range=0.1, shear_range=0.2, zoom_range=0.2,horizontal_flip=True)
+    
+    print(f"Found {len(font_dirs)} font directories for training.")
+    
+    # Set up data generators with augmentation
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=10,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.1,
+        zoom_range=0.1,
+        fill_mode='nearest',
+        validation_split=0.25  # Use 25% for validation
+    )
+    
+    # Flow from directory for training data
+    train_generator = train_datagen.flow_from_directory(
+        data_path,
+        target_size=(105, 105),
+        color_mode='grayscale',
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='training',
+        shuffle=True
+    )
+    
+    # Flow from directory for validation data
+    validation_generator = train_datagen.flow_from_directory(
+        data_path,
+        target_size=(105, 105),
+        color_mode='grayscale',
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='validation'
+    )
+    
+    # Create the model
     K.set_image_data_format('channels_last')
-
     model = create_model()
     
     # Use SGD optimizer without the deprecated decay parameter
-    # Replace with learning rate scheduler if needed
     sgd = optimizers.SGD(learning_rate=0.01, momentum=0.9, nesterov=True)
     
-    # Add learning rate scheduler to callbacks if decay functionality is needed
+    # Add learning rate scheduler to callbacks
     lr_scheduler = callbacks.ReduceLROnPlateau(
         monitor='val_loss',
         factor=0.1,
@@ -574,18 +577,16 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     # Create TensorBoard callback
     tensorboard_callback = callbacks.TensorBoard(
         log_dir=log_dir,
-        histogram_freq=1,  # Generate histograms of weights
-        write_graph=True,  # Visualize graph
-        write_images=True,  # Visualize model weights as images
-        update_freq='epoch',  # Update at end of each epoch
-        profile_batch=0  # No profiling for now
+        histogram_freq=1,
+        write_graph=True,
+        write_images=True,
+        update_freq='epoch',
+        profile_batch=0
     )
     
-    model.compile(loss='mean_squared_error', optimizer=sgd, metrics=['accuracy'])
+    model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
     early_stopping = callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='min')
-
     checkpoint = callbacks.ModelCheckpoint(model_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
-
     callbacks_list = [early_stopping, checkpoint, lr_scheduler, tensorboard_callback]
     
     # Save training config to output directory
@@ -597,19 +598,22 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
         f.write(f"Model: {model_name}\n")
         f.write(f"Training date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
-    model.fit(trainX, 
-        trainY,
-        shuffle=True,
-        batch_size=batch_size,
+    # Train the model using generators
+    model.fit(
+        train_generator,
+        steps_per_epoch=train_generator.samples // batch_size,
         epochs=epochs,
-        verbose=1,
-        validation_data=(testX, testY),
-        callbacks=callbacks_list)
-    score = model.evaluate(testX, testY, verbose=0)
-
-    print('Test loss:', score[0])
-    print('Test accuracy:', score[1])
-
+        validation_data=validation_generator,
+        validation_steps=validation_generator.samples // batch_size,
+        callbacks=callbacks_list,
+        verbose=1
+    )
+    
+    # Evaluate the model
+    val_loss, val_accuracy = model.evaluate(validation_generator)
+    print('Validation loss:', val_loss)
+    print('Validation accuracy:', val_accuracy)
+    
     # Save and return the model path
     print(f"Saving model to {model_path}")
     model.save(model_path)
