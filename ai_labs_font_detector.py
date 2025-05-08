@@ -85,14 +85,21 @@ def create_image(size, message, font, variable_spacing=False):
     
     return image
 
-def create_dataset(input_dir="fonts", output_dir="train_data", count_per_font=500):
+def create_dataset(input_dir="fonts", output_dir="train_data", count_per_font=500, seed=42):
     """
     Create a dataset of images with all available fonts.
     
     Args:
+        input_dir: Directory containing font files
         output_dir: Directory to save generated images
         count_per_font: Number of images to generate per font
+        seed: Random seed for reproducible dataset generation
     """
+    # Set random seed if provided for reproducibility
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+    
     # Create output directory
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
@@ -788,6 +795,8 @@ if __name__ == '__main__':
                               help='Output directory for dataset')
     create_parser.add_argument('--count', '-c', type=int, default=500, 
                               help='Number of images per font')
+    create_parser.add_argument('--seed', '-s', type=int, default=42,
+                              help='Random seed for reproducible dataset generation')
     
     # Train model command
     train_parser = subparsers.add_parser('train', help='Train the font detection model')
@@ -819,7 +828,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     if args.command == 'create_dataset':
-        create_dataset(args.input, args.output, args.count)
+        create_dataset(args.input, args.output, args.count, args.seed)
     elif args.command == 'train':
         saved_model_path = train(
             batch_size=args.batch_size, 
@@ -839,11 +848,14 @@ if __name__ == '__main__':
         parser.print_help()
         
     # Example commands:
-    # To create a dataset with default settings:
+    # To create a dataset with default settings (using seed=42):
     # python ai_labs_font_detector.py create_dataset
     #
     # To create a dataset with custom settings:
     # python ai_labs_font_detector.py create_dataset --input my_fonts --output my_dataset --count 1000
+    #
+    # To create a dataset with a different seed:
+    # python ai_labs_font_detector.py create_dataset --seed 123
     #
     # To train with custom settings and font directory:
     # python ai_labs_font_detector.py train --epochs 100 --batch_size 64 --data my_dataset --output-dir runs/my_experiment --model-name my_model.keras --fonts-dir my_fonts
