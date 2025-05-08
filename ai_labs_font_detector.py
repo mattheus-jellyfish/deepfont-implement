@@ -502,6 +502,15 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
         model_name: Name of the model file to save (using .keras extension)
         fonts_dir: Directory containing font files
     """
+    # Configure TensorFlow threading before any TensorFlow operations
+    try:
+        # Limit TensorFlow's internal parallelism to reduce memory usage
+        tf.config.threading.set_inter_op_parallelism_threads(2)
+        tf.config.threading.set_intra_op_parallelism_threads(4)
+        print("TensorFlow threading configured for memory efficiency")
+    except RuntimeError as e:
+        print(f"Warning: Could not configure TensorFlow threading: {e}")
+    
     # Check GPU availability before training
     gpu_available = check_gpu()
     if not gpu_available:
@@ -523,10 +532,6 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
             # )
         except RuntimeError as e:
             print(f"Error configuring GPU memory: {e}")
-    
-    # Limit TensorFlow's internal parallelism to reduce memory usage
-    tf.config.threading.set_inter_op_parallelism_threads(2)
-    tf.config.threading.set_intra_op_parallelism_threads(4)
     
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
@@ -620,20 +625,55 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
         f.write(f"Training date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     # Train the model using generators
-    model.fit(
-        train_generator,
-        steps_per_epoch=train_generator.samples // batch_size,
-        epochs=epochs,
-        validation_data=validation_generator,
-        validation_steps=validation_generator.samples // batch_size,
-        callbacks=callbacks_list,
-        verbose=1
-    )
-    
-    # Evaluate the model
-    val_loss, val_accuracy = model.evaluate(validation_generator)
-    print('Validation loss:', val_loss)
-    print('Validation accuracy:', val_accuracy)
+    try:
+        model.fit(
+            train_generator,
+            steps_per_epoch=train_generator.samples // batch_size,
+            epochs=epochs,
+            validation_data=validation_generator,
+            validation_steps=validation_generator.samples // batch_size,
+            callbacks=callbacks_list,
+            verbose=1
+        )
+        
+        # Evaluate the model
+        val_loss, val_accuracy = model.evaluate(validation_generator)
+        print('Validation loss:', val_loss)
+        print('Validation accuracy:', val_accuracy)
+    except Exception as e:
+        print("\n\n")
+        print("=" * 80)
+        print(f"ERROR DURING TRAINING: {type(e).__name__}")
+        print("=" * 80)
+        print(f"Error details: {str(e)}")
+        
+        # Memory-related errors
+        if isinstance(e, (tf.errors.ResourceExhaustedError, tf.errors.OOM)) or "OOM" in str(e) or "out of memory" in str(e).lower():
+            print("\nThis appears to be a memory-related error. Recommendations:")
+            print("1. Reduce batch size (try 8 or 4)")
+            print("2. Use a machine with more memory")
+            print("3. Simplify the model architecture (reduce filter sizes and dense layer sizes)")
+            print("4. Reduce image size or dataset size")
+        # Other TensorFlow errors
+        elif isinstance(e, tf.errors.OpError):
+            print("\nThis appears to be a TensorFlow operation error. Recommendations:")
+            print("1. Check the error message for specific guidance")
+            print("2. Restart the runtime")
+            print("3. Check compatibility of TensorFlow with your environment")
+        # General errors
+        else:
+            print("\nGeneral error recommendations:")
+            print("1. Check the error message for clues")
+            print("2. Verify your dataset structure and paths")
+            print("3. Check for issues in the model architecture")
+        
+        # Try to save the model if possible
+        try:
+            print("\nAttempting to save the partial model...")
+            model.save(model_path)
+            print(f"Partial model saved to {model_path}")
+        except Exception as save_error:
+            print(f"Could not save the partial model: {str(save_error)}")
     
     # Save and return the model path
     print(f"Saving model to {model_path}")
