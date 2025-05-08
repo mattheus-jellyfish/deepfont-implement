@@ -591,6 +591,17 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
         subset='validation'
     )
     
+    # Calculate proper steps per epoch (ensuring it's at least 1)
+    steps_per_epoch = max(1, train_generator.samples // batch_size)
+    validation_steps = max(1, validation_generator.samples // batch_size)
+    
+    # Print dataset information
+    print(f"Training samples: {train_generator.samples}")
+    print(f"Validation samples: {validation_generator.samples}")
+    print(f"Steps per epoch: {steps_per_epoch}")
+    print(f"Validation steps: {validation_steps}")
+    print(f"Number of classes: {len(FONT_MAPPING)}")
+    
     # Create the model
     K.set_image_data_format('channels_last')
     model = create_model()
@@ -618,7 +629,7 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     )
     
     model.compile(loss='categorical_crossentropy', optimizer=sgd, metrics=['accuracy'])
-    early_stopping = callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=0, mode='min')
+    early_stopping = callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='min')
     checkpoint = callbacks.ModelCheckpoint(model_path, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
     callbacks_list = [early_stopping, checkpoint, lr_scheduler, tensorboard_callback]
     
@@ -635,10 +646,10 @@ def train(batch_size=128, epochs=25, data_path="train_data/", output_dir="runs/e
     try:
         model.fit(
             train_generator,
-            steps_per_epoch=train_generator.samples // batch_size,
+            steps_per_epoch=steps_per_epoch,
             epochs=epochs,
             validation_data=validation_generator,
-            validation_steps=validation_generator.samples // batch_size,
+            validation_steps=validation_steps,
             callbacks=callbacks_list,
             verbose=1
         )
