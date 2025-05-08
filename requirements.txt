@@ -12,3 +12,4 @@ pathlib
 glob2
 argparse
 tensorboard
+tqdm

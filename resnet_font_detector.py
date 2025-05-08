@@ -13,6 +13,9 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import string
 import cv2
 from tensorflow.keras.utils import img_to_array
+import multiprocessing
+from functools import partial
+import tqdm
 
 # Constants
 INPUT_SIZE = 512
@@ -213,9 +216,112 @@ class EnglishCorpusGenerator:
         return text
 
 # Update the create_dataset function to use these new components
+def generate_font_images(font_file, output_dir, count_per_font, text_generator, seed=None):
+    """
+    Generate images for a single font. This function is meant to be run in parallel.
+    
+    Args:
+        font_file: Path to the font file
+        output_dir: Directory to save generated images
+        count_per_font: Number of images to generate for this font
+        text_generator: Text generator instance
+        seed: Random seed (will be offset by process id for uniqueness)
+    
+    Returns:
+        tuple: (font_name, success_count, error_count)
+    """
+    # Set random seed if provided (add process id to avoid identical sequences)
+    if seed is not None:
+        # Ensure different processes have different seeds
+        process_seed = seed + os.getpid() % 1000
+        random.seed(process_seed)
+        np.random.seed(process_seed)
+    
+    # Setup font name and directory
+    font_name = Path(font_file).stem
+    font_dir = Path(f"{output_dir}/{font_name}")
+    font_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create local background generator
+    bg_generator = background_image_generator()
+    
+    success_count = 0
+    error_count = 0
+    
+    try:
+        for c in range(count_per_font):
+            # Generate a random text length between 6 and 18 characters
+            text_length = random.randint(6, 18)
+            text = text_generator.generate_text(min_length=text_length, max_length=text_length)
+            
+            # Get a background image
+            bg_img = next(bg_generator)
+            
+            # Create font with random size (30-60)
+            fontsize = random.randint(30, 60)
+            font = ImageFont.truetype(font_file, fontsize)
+            
+            # Setup variables for text placement
+            height = INPUT_SIZE
+            width = INPUT_SIZE
+            
+            # Create a copy of the background for drawing
+            img = bg_img.copy()
+            draw = ImageDraw.Draw(img)
+            
+            # Calculate text dimensions
+            bbox = font.getbbox(text)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Randomize text position within the image
+            max_x = width - text_width - 20
+            max_y = height - text_height - 20
+            
+            if max_x < 20:
+                max_x = 20
+            if max_y < 20:
+                max_y = 20
+                
+            x = random.randint(20, max_x)
+            y = random.randint(20, max_y)
+            
+            # Determine text color based on background
+            # Use contrasting colors to ensure text is visible
+            # Extract the background color at the text position
+            bg_color_sample = np.array(bg_img.crop((x, y, x+10, y+10)))
+            
+            # Calculate average brightness of the background sample
+            brightness = np.mean(bg_color_sample)
+            
+            # Choose contrasting color (black for bright backgrounds, white for dark backgrounds)
+            text_color = 'black' if brightness > 128 else 'white'
+            
+            # Add text shadow or outline for better readability
+            shadow_offset = 2
+            shadow_color = 'white' if text_color == 'black' else 'black'
+            
+            # Draw text shadow/outline
+            draw.text((x+shadow_offset, y+shadow_offset), text, font=font, fill=shadow_color)
+            
+            # Draw main text
+            draw.text((x, y), text, font=font, fill=text_color)
+            
+            # Save the image
+            save_path = f"{output_dir}/{font_name}/{font_name}_{c}.jpg"
+            img.save(save_path, quality=95)
+            success_count += 1
+                
+    except Exception as e:
+        print(f"Error processing font {font_name}: {e}")
+        error_count += 1
+    
+    return font_name, success_count, error_count
+
 def create_dataset(input_dir=FONT_DIR, output_dir="train_data", count_per_font=500, seed=RANDOM_SEED):
     """
     Create a dataset of images with all available fonts using background images.
+    This version uses multiprocessing to generate images in parallel.
     
     Args:
         input_dir: Directory containing font files
@@ -231,8 +337,7 @@ def create_dataset(input_dir=FONT_DIR, output_dir="train_data", count_per_font=5
     # Create output directory
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    # Initialize background generator and text generator
-    backgrounds = background_image_generator()
+    # Initialize text generator (shared across processes)
     text_generator = EnglishCorpusGenerator()
     
     # Get all font files
@@ -243,86 +348,45 @@ def create_dataset(input_dir=FONT_DIR, output_dir="train_data", count_per_font=5
     
     print(f"Found {len(font_files)} font files.")
     
-    # Process each font
-    for font_file in font_files:
-        font_name = Path(font_file).stem
-        print(f"Generating {count_per_font} samples with font: {font_name}")
-        
-        # Create font-specific directory
-        Path(f"{output_dir}/{font_name}").mkdir(parents=True, exist_ok=True)
-        
-        try:
-            for c in range(count_per_font):
-                # Generate a random text length between 6 and 18 characters
-                text_length = random.randint(6, 18)
-                text = text_generator.generate_text(min_length=text_length, max_length=text_length)
-                
-                # Get a background image
-                bg_img = next(backgrounds)
-                
-                # Create font with random size (30-60)
-                fontsize = random.randint(30, 60)
-                font = ImageFont.truetype(font_file, fontsize)
-                
-                # Setup variables for text placement
-                height = INPUT_SIZE
-                width = INPUT_SIZE
-                
-                # Create a copy of the background for drawing
-                img = bg_img.copy()
-                draw = ImageDraw.Draw(img)
-                
-                # Calculate text dimensions
-                bbox = font.getbbox(text)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
-                
-                # Randomize text position within the image
-                max_x = width - text_width - 20
-                max_y = height - text_height - 20
-                
-                if max_x < 20:
-                    max_x = 20
-                if max_y < 20:
-                    max_y = 20
-                    
-                x = random.randint(20, max_x)
-                y = random.randint(20, max_y)
-                
-                # Determine text color based on background
-                # Use contrasting colors to ensure text is visible
-                # Extract the background color at the text position
-                bg_color_sample = np.array(bg_img.crop((x, y, x+10, y+10)))
-                
-                # Calculate average brightness of the background sample
-                brightness = np.mean(bg_color_sample)
-                
-                # Choose contrasting color (black for bright backgrounds, white for dark backgrounds)
-                text_color = 'black' if brightness > 128 else 'white'
-                
-                # Add text shadow or outline for better readability
-                shadow_offset = 2
-                shadow_color = 'white' if text_color == 'black' else 'black'
-                
-                # Draw text shadow/outline
-                draw.text((x+shadow_offset, y+shadow_offset), text, font=font, fill=shadow_color)
-                
-                # Draw main text
-                draw.text((x, y), text, font=font, fill=text_color)
-                
-                # Save the image
-                save_path = f"{output_dir}/{font_name}/{font_name}_{c}.jpg"
-                img.save(save_path, quality=95)
-                
-                # Print progress periodically
-                if c % 50 == 0 and c > 0:
-                    print(f"  Generated {c}/{count_per_font} images for {font_name}")
-                    
-        except Exception as e:
-            print(f"Error processing font {font_name}: {e}")
-            continue
+    # Determine optimal number of processes (use 75% of available cores by default)
+    num_cores = multiprocessing.cpu_count()
+    num_processes = max(1, int(num_cores * 0.75))
+    print(f"Using {num_processes} processes for parallel generation")
     
-    print("Dataset creation completed!")
+    # Create a partial function with fixed parameters
+    generate_func = partial(
+        generate_font_images, 
+        output_dir=output_dir, 
+        count_per_font=count_per_font,
+        text_generator=text_generator,
+        seed=seed
+    )
+    
+    # Process fonts in parallel
+    results = []
+    try:
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            # Use tqdm to show a progress bar
+            for result in tqdm.tqdm(
+                pool.imap_unordered(generate_func, font_files),
+                total=len(font_files),
+                desc="Generating font images"
+            ):
+                font_name, success_count, error_count = result
+                print(f"Font {font_name}: Generated {success_count} images, {error_count} errors")
+                results.append(result)
+                
+    except KeyboardInterrupt:
+        print("\nGeneration interrupted by user. Partial dataset may be available.")
+    
+    # Summarize results
+    total_success = sum(r[1] for r in results)
+    total_errors = sum(r[2] for r in results)
+    
+    print("\nDataset creation completed!")
+    print(f"Total images generated: {total_success}")
+    print(f"Total errors: {total_errors}")
+    print(f"Dataset saved to: {output_dir}")
 
 # Integrated Data Augmentation for Training
 def create_augmentation_pipeline(augmentation_level='v3'):
@@ -1079,7 +1143,7 @@ if __name__ == '__main__':
     # python resnet_font_detector.py train
     # python resnet_font_detector.py train --model-type resnet18 --pretrained --epochs 50 --batch-size 64
     # python resnet_font_detector.py train -t resnet34 -p -e 30 -b 32 -d custom_dataset -o runs/custom_run -m custom_model.keras
-    # python resnet_font_detector.py train -t resnet50 -p -e 100 -b 16 -l 0.001 --fine-tune-after 20 --augmentation v2
+    # python resnet_font_detector.py train -t resnet50 -p -e 50 -b 64 -d train_data -o runs/resnet_tensorflow/fonts_350_round_1 -m custom-resnet50.keras -f fonts_350
     #
     # Prediction examples:
     # python resnet_font_detector.py predict --image test_image.jpg --model runs/experiment/resnet_font_model.keras
